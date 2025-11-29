@@ -11,7 +11,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         'Content-Type': 'application/json',
         'X-Api-Key': apiKey!,
       },
-      body: req.method === 'POST' ? JSON.stringify(req.body) : undefined,
+      body: ['POST', 'PATCH', 'PUT'].includes(req.method!) ? JSON.stringify(req.body) : undefined,
     });
 
     const contentType = response.headers.get('content-type');

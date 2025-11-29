@@ -39,4 +39,3 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
->>>>>>> 5b9569a (Initial commit from Create Next App)

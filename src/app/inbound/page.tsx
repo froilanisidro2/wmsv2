@@ -79,6 +79,118 @@ interface ASNLine {
 }
 
 export default function InboundPage() {
+            // State for ASN lines update feedback
+            const [linesUpdateStatus, setLinesUpdateStatus] = useState<string | null>(null);
+
+            // Handler to update ASN lines in backend
+            const handleUpdateLines = async () => {
+              setLinesUpdateStatus(null);
+              if (!selectedHeaderId) {
+                setLinesUpdateStatus('No ASN header selected.');
+                return;
+              }
+              const linesToUpdate = lineRecords.filter(line => line.asn_header_id === selectedHeaderId);
+              if (linesToUpdate.length === 0) {
+                setLinesUpdateStatus('No ASN lines to update.');
+                return;
+              }
+              try {
+                for (const line of linesToUpdate) {
+                  // Only send editable fields for PATCH
+                  const lineToSend = {
+                    item_id: line.item_id,
+                    item_description: line.item_description,
+                    expected_quantity: line.expected_quantity,
+                    received_quantity: line.received_quantity,
+                    batch_number: line.batch_number,
+                    serial_number: line.serial_number,
+                    manufacturing_date: line.manufacturing_date,
+                    expiry_date: line.expiry_date,
+                    pallet_id: line.pallet_id,
+                    uom: line.uom,
+                    remarks: line.remarks ?? ''
+                  };
+                  const patchUrl = `${urlLines}?id=eq.${line.id}`;
+                  console.log('PATCH ASN line:', { url: patchUrl, payload: lineToSend });
+                  const res = await fetch(patchUrl, {
+                    method: 'PATCH',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'X-Api-Key': apiKey,
+                    },
+                    body: JSON.stringify(lineToSend),
+                  });
+                  const resText = await res.text();
+                  console.log('PATCH response:', { status: res.status, text: resText });
+                  if (!res.ok) {
+                    setLinesUpdateStatus(`Failed to update ASN line ${line.id}. Status: ${res.status}. Response: ${resText}`);
+                    return;
+                  }
+                }
+                setLinesUpdateStatus('ASN lines updated successfully!');
+                // Re-fetch ASN lines from backend to update grid
+                try {
+                  const linesRes = await fetch(urlLines, { method: 'GET', headers: { 'X-Api-Key': apiKey } });
+                  const linesData = await linesRes.json();
+                  setLineRecords(Array.isArray(linesData) ? linesData : [linesData]);
+                } catch (err) {
+                  // Optionally handle fetch error
+                }
+              } catch (err: any) {
+                setLinesUpdateStatus(`Error: ${err.message}`);
+              }
+            };
+          // Track selected ASN header id for filtering lines
+          const [selectedHeaderId, setSelectedHeaderId] = useState<string | null>(null);
+        // Ref for ASN headers grid
+        const headerGridRef = useRef<any>(null);
+        // State for delete feedback
+        const [deleteStatus, setDeleteStatus] = useState<string | null>(null);
+
+        // Handler to delete selected ASN headers
+        const handleDeleteSelectedHeaders = async () => {
+          setDeleteStatus(null);
+          const selectedNodes = headerGridRef.current?.api.getSelectedNodes() || [];
+          const selectedIds = selectedNodes.map((node: any) => node.data.id);
+          if (selectedIds.length === 0) {
+            setDeleteStatus('No ASN headers selected.');
+            return;
+          }
+          try {
+            // Delete ASN headers
+            for (const id of selectedIds) {
+              const res = await fetch(`/api/asn_headers?id=${id}`, {
+                method: 'DELETE',
+                headers: {
+                  'X-Api-Key': apiKey,
+                },
+              });
+              if (!res.ok) {
+                setDeleteStatus(`Failed to delete ASN header ${id}. Status: ${res.status}`);
+                return;
+              }
+            }
+            // Cascade delete ASN lines for each header
+            for (const headerId of selectedIds) {
+              const res = await fetch(`/api/asn_lines?asn_header_id=${headerId}`, {
+                method: 'DELETE',
+                headers: {
+                  'X-Api-Key': apiKey,
+                },
+              });
+              if (!res.ok) {
+                setDeleteStatus(`Failed to delete ASN lines for header ${headerId}. Status: ${res.status}`);
+                return;
+              }
+            }
+            // Remove deleted headers and lines from UI
+            setHeaderRecords(prev => prev.filter(rec => !selectedIds.includes(rec.id)));
+            setLineRecords(prev => prev.filter(line => !selectedIds.includes(line.asn_header_id)));
+            setDeleteStatus('Selected ASN headers and related ASN lines deleted successfully!');
+          } catch (err: any) {
+            setDeleteStatus(`Error: ${err.message}`);
+          }
+        };
       // State for unified ASN entry submission feedback
       const [entrySubmitStatus, setEntrySubmitStatus] = useState<string | null>(null);
 
@@ -99,7 +211,7 @@ export default function InboundPage() {
           vendor_name: header.vendorName,
           po_number: header.poNumber,
           asn_date: header.asnDate,
-          status: header.status,
+          status: header.status || 'New',
           remarks: header.remarks
         };
         // Prepare ASN lines payload
@@ -162,24 +274,26 @@ export default function InboundPage() {
     const [lineRecords, setLineRecords] = useState<any[]>([]);
 
     // Fetch ASN headers and lines for record view
-    useEffect(() => {
-      async function fetchRecords() {
-        try {
-          const headersRes = await fetch('/api/asn_headers', { method: 'GET' });
-          const headersData = await headersRes.json();
-          setHeaderRecords(Array.isArray(headersData) ? headersData : [headersData]);
-          const linesRes = await fetch('/api/asn_lines', { method: 'GET' });
-          const linesData = await linesRes.json();
-          setLineRecords(Array.isArray(linesData) ? linesData : [linesData]);
-        } catch (err) {
-          // ...handle error
+      useEffect(() => {
+        async function fetchRecords() {
+          try {
+            const headersRes = await fetch(urlHeaders, { method: 'GET', headers: { 'X-Api-Key': apiKey } });
+            const headersData = await headersRes.json();
+            console.log('ASN Headers Data:', headersData); // Debug log
+            setHeaderRecords(Array.isArray(headersData) ? headersData : [headersData]);
+            const linesRes = await fetch(urlLines, { method: 'GET', headers: { 'X-Api-Key': apiKey } });
+            const linesData = await linesRes.json();
+            setLineRecords(Array.isArray(linesData) ? linesData : [linesData]);
+          } catch (err) {
+            // ...handle error
+          }
         }
-      }
-      fetchRecords();
-    }, []);
+        fetchRecords();
+      }, []);
 
   // AG Grid column definitions for record view
   const headerRecordCols = [
+      { headerName: 'ID', field: 'id', editable: false },
     { headerName: 'ASN Number', field: 'asn_number', editable: true },
     { headerName: 'Vendor ID', field: 'vendor_id', editable: true },
     { headerName: 'Vendor Name', field: 'vendor_name', editable: true },
@@ -209,15 +323,6 @@ export default function InboundPage() {
     { headerName: 'Pallet ID', field: 'pallet_id', editable: true },
     { headerName: 'UOM', field: 'uom', editable: true },
     { headerName: 'Remarks', field: 'remarks', editable: true },
-    {
-      headerName: 'Status',
-      field: 'status',
-      editable: true,
-      cellEditor: 'agSelectCellEditor',
-      cellEditorParams: {
-        values: ['New', 'Received', 'PutAway', 'Complete'],
-      },
-    },
   ];
   const pasteTextareaRef = React.useRef<HTMLTextAreaElement>(null);
   const [showPasteArea, setShowPasteArea] = useState(false);
@@ -440,10 +545,7 @@ export default function InboundPage() {
           <h2 className="text-2xl font-bold mb-4">Inbound Entry</h2>
           <form className="grid grid-cols-2 gap-4">
             {clientReady && (
-              <div className="col-span-2 mb-2">
-                {/* QR code for ASN number */}
-                <ASNBarcode value={header.asnNumber} />
-              </div>
+              <></>
             )}
             <div>
               <label className="block font-medium mb-1">ASN</label>
@@ -555,7 +657,7 @@ export default function InboundPage() {
               rowData={rowData}
               columnDefs={columnDefs}
               defaultColDef={defaultColDef}
-              onCellValueChanged={params => {
+              onCellValueChanged={async params => {
                 const rowIndex = params.node?.rowIndex;
                 if (rowIndex !== null && rowIndex !== undefined) {
                   const updatedRows = [...rowData];
@@ -567,6 +669,35 @@ export default function InboundPage() {
                   }
                   updatedRows[rowIndex] = data;
                   setRowData(updatedRows);
+                  // PATCH update for this row
+                  if (data.id) {
+                    // Map AG Grid fields to DB columns
+                    const lineToSend = {
+                      item_id: data.itemId ?? data.item_id,
+                      item_description: data.itemDescription ?? data.item_description,
+                      expected_quantity: data.expectedQuantity ?? data.expected_quantity,
+                      received_quantity: data.receivedQuantity ?? data.received_quantity,
+                      batch_number: data.batchNumber ?? data.batch_number,
+                      serial_number: data.serialNumber ?? data.serial_number,
+                      manufacturing_date: data.manufacturingDate ?? data.manufacturing_date,
+                      expiry_date: data.expiryDate ?? data.expiry_date,
+                      pallet_id: data.palletId ?? data.pallet_id,
+                      uom: data.uom,
+                      remarks: data.remarks ?? ''
+                    };
+                    const patchUrl = `${urlLines}?id=eq.${data.id}`;
+                    console.log('PATCH ASN line (cell edit):', { url: patchUrl, payload: lineToSend });
+                    const res = await fetch(patchUrl, {
+                      method: 'PATCH',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'X-Api-Key': apiKey,
+                      },
+                      body: JSON.stringify(lineToSend),
+                    });
+                    const resText = await res.text();
+                    console.log('PATCH response (cell edit):', { status: res.status, text: resText });
+                  }
                 }
               }}
               stopEditingWhenCellsLoseFocus={true}
@@ -593,14 +724,84 @@ export default function InboundPage() {
                 <option value="PutAway">PutAway</option>
                 <option value="Complete">Complete</option>
               </select>
-              <button className="bg-blue-600 text-white px-3 py-1 rounded shadow font-semibold">Save</button>
+              <button
+                className="bg-blue-600 text-white px-3 py-1 rounded shadow font-semibold"
+                onClick={async () => {
+                  if (!selectedHeaderId) return;
+                  // Find the selected header
+                  const header = headerRecords.find(h => h.id === selectedHeaderId);
+                  if (!header) return;
+                  // Prepare header PATCH payload
+                  const headerToSend = {
+                    asn_number: header.asn_number,
+                    vendor_id: header.vendor_id,
+                    vendor_name: header.vendor_name,
+                    po_number: header.po_number,
+                    asn_date: header.asn_date,
+                    status: header.status,
+                    remarks: header.remarks ?? ''
+                  };
+                  const patchHeaderUrl = `${urlHeaders}?id=eq.${header.id}`;
+                  console.log('PATCH ASN header:', { url: patchHeaderUrl, payload: headerToSend });
+                  const headerRes = await fetch(patchHeaderUrl, {
+                    method: 'PATCH',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'X-Api-Key': apiKey,
+                    },
+                    body: JSON.stringify(headerToSend),
+                  });
+                  const headerResText = await headerRes.text();
+                  console.log('PATCH header response:', { status: headerRes.status, text: headerResText });
+                  // Now PATCH all lines for this header
+                  const linesToUpdate = lineRecords.filter(line => line.asn_header_id === selectedHeaderId);
+                  for (const line of linesToUpdate) {
+                    const lineToSend = {
+                      item_id: line.item_id,
+                      item_description: line.item_description,
+                      expected_quantity: line.expected_quantity,
+                      received_quantity: line.received_quantity,
+                      batch_number: line.batch_number,
+                      serial_number: line.serial_number,
+                      manufacturing_date: line.manufacturing_date,
+                      expiry_date: line.expiry_date,
+                      pallet_id: line.pallet_id,
+                      uom: line.uom,
+                      remarks: line.remarks ?? ''
+                    };
+                    const patchLineUrl = `${urlLines}?id=eq.${line.id}`;
+                    console.log('PATCH ASN line:', { url: patchLineUrl, payload: lineToSend });
+                    const lineRes = await fetch(patchLineUrl, {
+                      method: 'PATCH',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'X-Api-Key': apiKey,
+                      },
+                      body: JSON.stringify(lineToSend),
+                    });
+                    const lineResText = await lineRes.text();
+                    console.log('PATCH line response:', { status: lineRes.status, text: lineResText });
+                  }
+                  // Optionally re-fetch records to refresh UI
+                  try {
+                    const headersRes = await fetch(urlHeaders, { method: 'GET', headers: { 'X-Api-Key': apiKey } });
+                    const headersData = await headersRes.json();
+                    setHeaderRecords(Array.isArray(headersData) ? headersData : [headersData]);
+                    const linesRes = await fetch(urlLines, { method: 'GET', headers: { 'X-Api-Key': apiKey } });
+                    const linesData = await linesRes.json();
+                    setLineRecords(Array.isArray(linesData) ? linesData : [linesData]);
+                  } catch (err) {}
+                }}
+              >Save</button>
             </div>
           </div>
           <div className="ag-theme-alpine" style={{ width: '100%', minWidth: 0, height: 300 }}>
             <AgGridReact
+              ref={headerGridRef}
               rowData={headerRecords}
               columnDefs={[
                 { headerName: '', field: 'selected', checkboxSelection: true, width: 40 },
+                { headerName: 'ID', field: 'id', editable: false, width: 220 },
                 {
                   headerName: 'Status',
                   field: 'status',
@@ -611,12 +812,89 @@ export default function InboundPage() {
                   },
                   width: 120,
                 },
-                ...headerRecordCols.filter(col => col.field !== 'status'),
+                ...headerRecordCols.filter(col => col.field !== 'status' && col.field !== 'id'),
               ]}
               defaultColDef={{ resizable: true, sortable: true, filter: true, editable: true }}
               suppressRowClickSelection={true}
-              rowSelection="multiple"
+              rowSelection="single"
+              onRowClicked={params => {
+                if (params.data && params.data.id) {
+                  setSelectedHeaderId(params.data.id);
+                  const filteredLines = lineRecords.filter(line => line.asn_header_id === params.data.id);
+                  console.log('Row clicked. Selected ASN Header ID:', params.data.id);
+                  console.log('Filtered ASN Lines:', filteredLines);
+                }
+              }}
+              onCellValueChanged={async params => {
+                const data = params.data;
+                if (data.id) {
+                  setHeaderRecords(prev => {
+                    const updated = prev.map(header =>
+                      header.id === data.id
+                        ? {
+                            ...header,
+                            asn_number: data.asn_number ?? data.asnNumber ?? '',
+                            vendor_id: data.vendor_id ?? data.vendorId ?? '',
+                            vendor_name: data.vendor_name ?? data.vendorName ?? '',
+                            po_number: data.po_number ?? data.poNumber ?? '',
+                            asn_date: (data.asn_date ?? data.asnDate) ? (data.asn_date ?? data.asnDate).slice(0, 10) : null,
+                            status: data.status ?? '',
+                            remarks: data.remarks ?? ''
+                          }
+                        : header
+                    );
+                    console.log('Before PATCH (header):', prev.find(header => header.id === data.id));
+                    console.log('After PATCH (header):', updated.find(header => header.id === data.id));
+                    return updated;
+                  });
+                  // Normalize AG Grid fields to DB columns and convert types
+                  const headerToSend = {
+                    asn_number: data.asn_number ?? data.asnNumber ?? '',
+                    vendor_id: data.vendor_id ?? data.vendorId ?? '',
+                    vendor_name: data.vendor_name ?? data.vendorName ?? '',
+                    po_number: data.po_number ?? data.poNumber ?? '',
+                    asn_date: (data.asn_date ?? data.asnDate) ? (data.asn_date ?? data.asnDate).slice(0, 10) : null,
+                    status: data.status ?? '',
+                    remarks: data.remarks ?? ''
+                  };
+                  const patchUrl = `${urlHeaders}?id=eq.${data.id}`;
+                  console.log('PATCH ASN header (record grid):', { url: patchUrl, payload: headerToSend });
+                  const res = await fetch(patchUrl, {
+                    method: 'PATCH',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'X-Api-Key': apiKey,
+                    },
+                    body: JSON.stringify(headerToSend),
+                  });
+                  const resText = await res.text();
+                  console.log('PATCH response (header record grid):', { status: res.status, text: resText });
+                  // Force grid refresh after PATCH
+                  try {
+                    const headersRes = await fetch(urlHeaders, { method: 'GET', headers: { 'X-Api-Key': apiKey } });
+                    const headersData = await headersRes.json();
+                    setHeaderRecords(Array.isArray(headersData) ? headersData : [headersData]);
+                  } catch (err) {
+                    // Optionally handle fetch error
+                  }
+                }
+              }}
             />
+            {/* Delete Selected Button */}
+            <div className="mt-2">
+              <button
+                type="button"
+                className="bg-red-600 text-white px-4 py-2 rounded shadow font-semibold"
+                onClick={handleDeleteSelectedHeaders}
+              >
+                Delete Selected
+              </button>
+              {deleteStatus && (
+                <div className="mt-2 text-sm font-semibold p-2 rounded" style={{ background: '#f3f4f6', color: deleteStatus.startsWith('Error') || deleteStatus.startsWith('Failed') ? '#dc2626' : '#059669' }}>
+                  {deleteStatus}
+                </div>
+              )}
+            </div>
           </div>
         </div>
         {/* Inbound Records (right column, 70%) */}
@@ -627,12 +905,131 @@ export default function InboundPage() {
           </div>
           <div className="ag-theme-alpine" style={{ width: '100%', minWidth: 0, height: 300 }}>
             <AgGridReact
-              rowData={lineRecords}
+              rowData={selectedHeaderId ? lineRecords.filter(line => line.asn_header_id === selectedHeaderId) : lineRecords}
               columnDefs={lineRecordCols}
               defaultColDef={{ resizable: true, sortable: true, filter: true, editable: true }}
               suppressRowClickSelection={true}
               rowSelection="multiple"
+              key={selectedHeaderId + '-' + lineRecords.length}
+              onCellValueChanged={async params => {
+                const data = params.data;
+                if (data.id) {
+                  // Update lineRecords with the new value
+                  setLineRecords(prev => {
+                    const updated = prev.map(line =>
+                      line.id === data.id
+                        ? {
+                            ...line,
+                            item_id: data.item_id ?? data.itemId ?? '',
+                            item_description: data.item_description ?? data.itemDescription ?? '',
+                            expected_quantity: data.expected_quantity !== undefined ? Number(data.expected_quantity) : (data.expectedQuantity !== undefined ? Number(data.expectedQuantity) : null),
+                            received_quantity: data.received_quantity !== undefined ? Number(data.received_quantity) : (data.receivedQuantity !== undefined ? Number(data.receivedQuantity) : null),
+                            batch_number: data.batch_number ?? data.batchNumber ?? '',
+                            serial_number: data.serial_number ?? data.serialNumber ?? '',
+                            manufacturing_date: (data.manufacturing_date ?? data.manufacturingDate) ? (data.manufacturing_date ?? data.manufacturingDate).slice(0, 10) : null,
+                            expiry_date: (data.expiry_date ?? data.expiryDate) ? (data.expiry_date ?? data.expiryDate).slice(0, 10) : null,
+                            pallet_id: data.pallet_id ?? data.palletId ?? '',
+                            uom: data.uom ?? '',
+                            remarks: data.remarks ?? '',
+                          }
+                        : line
+                    );
+                    console.log('Before PATCH:', prev.find(line => line.id === data.id));
+                    console.log('After PATCH:', updated.find(line => line.id === data.id));
+                    return updated;
+                  });
+                  // Normalize AG Grid fields to DB columns and convert types
+                  const lineToSend = {
+                    item_id: data.item_id ?? data.itemId ?? '',
+                    item_description: data.item_description ?? data.itemDescription ?? '',
+                    expected_quantity: data.expected_quantity !== undefined ? Number(data.expected_quantity) : (data.expectedQuantity !== undefined ? Number(data.expectedQuantity) : null),
+                    received_quantity: data.received_quantity !== undefined ? Number(data.received_quantity) : (data.receivedQuantity !== undefined ? Number(data.receivedQuantity) : null),
+                    batch_number: data.batch_number ?? data.batchNumber ?? '',
+                    serial_number: data.serial_number ?? data.serialNumber ?? '',
+                    manufacturing_date: (data.manufacturing_date ?? data.manufacturingDate) ? (data.manufacturing_date ?? data.manufacturingDate).slice(0, 10) : null,
+                    expiry_date: (data.expiry_date ?? data.expiryDate) ? (data.expiry_date ?? data.expiryDate).slice(0, 10) : null,
+                    pallet_id: data.pallet_id ?? data.palletId ?? '',
+                    uom: data.uom ?? '',
+                    remarks: data.remarks ?? ''
+                  };
+                  const patchUrl = `${urlLines}?id=eq.${data.id}`;
+                  console.log('PATCH ASN line (record grid):', { url: patchUrl, payload: lineToSend });
+                  const res = await fetch(patchUrl, {
+                    method: 'PATCH',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'X-Api-Key': apiKey,
+                    },
+                    body: JSON.stringify(lineToSend),
+                  });
+                  const resText = await res.text();
+                  console.log('PATCH response (record grid):', { status: res.status, text: resText });
+                  // Force grid refresh after PATCH
+                  try {
+                    const linesRes = await fetch(urlLines, { method: 'GET', headers: { 'X-Api-Key': apiKey } });
+                    const linesData = await linesRes.json();
+                    setLineRecords(Array.isArray(linesData) ? linesData : [linesData]);
+                  } catch (err) {
+                    // Optionally handle fetch error
+                  }
+                }
+              }}
             />
+            {/* Save ASN Lines Button */}
+            <div className="mt-2">
+              <button
+                type="button"
+                className="bg-blue-600 text-white px-4 py-2 rounded shadow font-semibold"
+                onClick={async () => {
+                  // PATCH ASN header first
+                  if (!selectedHeaderId) {
+                    setLinesUpdateStatus('No ASN header selected.');
+                    return;
+                  }
+                  const header = headerRecords.find(h => h.id === selectedHeaderId);
+                  if (!header) {
+                    setLinesUpdateStatus('Selected ASN header not found.');
+                    return;
+                  }
+                  const headerToSend = {
+                    asn_number: header.asn_number ?? header.asnNumber ?? '',
+                    vendor_id: header.vendor_id ?? header.vendorId ?? '',
+                    vendor_name: header.vendor_name ?? header.vendorName ?? '',
+                    po_number: header.po_number ?? header.poNumber ?? '',
+                    asn_date: (header.asn_date ?? header.asnDate) ? (header.asn_date ?? header.asnDate).slice(0, 10) : null,
+                    status: header.status ?? '',
+                    remarks: header.remarks ?? ''
+                  };
+                  const patchHeaderUrl = `${urlHeaders}?id=eq.${header.id}`;
+                  console.log('PATCH ASN header (Update Records):', { url: patchHeaderUrl, payload: headerToSend });
+                  const headerRes = await fetch(patchHeaderUrl, {
+                    method: 'PATCH',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'X-Api-Key': apiKey,
+                    },
+                    body: JSON.stringify(headerToSend),
+                  });
+                  const headerResText = await headerRes.text();
+                  console.log('PATCH header response (Update Records):', { status: headerRes.status, text: headerResText });
+                  // PATCH ASN lines
+                  await handleUpdateLines();
+                  // Optionally re-fetch records to refresh UI
+                  try {
+                    const headersRes = await fetch(urlHeaders, { method: 'GET', headers: { 'X-Api-Key': apiKey } });
+                    const headersData = await headersRes.json();
+                    setHeaderRecords(Array.isArray(headersData) ? headersData : [headersData]);
+                  } catch (err) {}
+                }}
+              >
+                Update Records
+              </button>
+              {linesUpdateStatus && (
+                <div className="mt-2 text-sm font-semibold p-2 rounded" style={{ background: '#f3f4f6', color: linesUpdateStatus.startsWith('Error') || linesUpdateStatus.startsWith('Failed') ? '#dc2626' : '#059669' }}>
+                  {linesUpdateStatus}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
