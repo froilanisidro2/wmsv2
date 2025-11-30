@@ -19,8 +19,9 @@ const urlLines = process.env.NEXT_PUBLIC_URL_ASN_LINES || '';
 // AG Grid columnDefs for entry grid
 const columnDefs = [
   { headerName: '', field: 'selected', checkboxSelection: true, width: 40 },
-  { headerName: 'Item ID', field: 'itemId', editable: true },
-  { headerName: 'Item Description', field: 'itemDescription', editable: true },
+  { headerName: 'Item Code', field: 'itemCode', editable: true },
+  { headerName: 'Item Name', field: 'itemName', editable: true },
+  { headerName: 'Description', field: 'description', editable: true },
   { headerName: 'Expected Qty', field: 'expectedQuantity', editable: true },
   { headerName: 'Received Qty', field: 'receivedQuantity', editable: true },
   { headerName: 'Batch #', field: 'batchNumber', editable: true },
@@ -62,8 +63,9 @@ interface ASNHeader {
 }
 
 interface ASNLine {
-  itemId: number | null;
-  itemDescription: string;
+  itemCode: string;
+  itemName: string;
+  description: string;
   expectedQuantity: string;
   receivedQuantity: string;
   batchNumber: string;
@@ -76,6 +78,20 @@ interface ASNLine {
 }
 
 export default function InboundPage() {
+    // State for Putaway modal
+    const [showPutawayModal, setShowPutawayModal] = useState(false);
+    const [putawayHeaderId, setPutawayHeaderId] = useState<number | null>(null);
+    const [putawayLocation, setPutawayLocation] = useState('');
+    const [putawayQuantity, setPutawayQuantity] = useState('');
+    const [putawayRemarks, setPutawayRemarks] = useState('');
+    const [putawayLoading, setPutawayLoading] = useState(false);
+    const [putawayError, setPutawayError] = useState<string | null>(null);
+    // TODO: Replace with real locations from API
+    const locationOptions = [
+      { id: 1, name: 'A1' },
+      { id: 2, name: 'B1' },
+      { id: 3, name: 'C1' },
+    ];
   // Vendor and item lists for dropdowns
   const [vendors, setVendors] = useState<any[]>([]);
   const [items, setItems] = useState<any[]>([]);
@@ -220,10 +236,11 @@ export default function InboundPage() {
           remarks: header.remarks
         };
         // Prepare ASN lines payload
-        const filteredRows = rowData.filter(row => row.itemId !== null);
+        const filteredRows = rowData.filter(row => row.itemCode);
         const asnLinesPayload = filteredRows.map(row => ({
-          item_id: row.itemId,
-          item_description: row.itemDescription,
+          item_code: row.itemCode,
+          item_name: row.itemName,
+          description: row.description,
           expected_quantity: row.expectedQuantity ? Number(row.expectedQuantity) : null,
           received_quantity: row.receivedQuantity ? Number(row.receivedQuantity) : null,
           batch_number: row.batchNumber || null,
@@ -734,6 +751,82 @@ export default function InboundPage() {
 
       {/* Record View Grids */}
       <div className="w-full bg-white rounded-lg border shadow p-6 flex flex-row gap-6 mt-8" style={{ width: '100%', minWidth: 0 }}>
+        {/* Putaway Modal */}
+        {showPutawayModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-lg p-6 min-w-[320px]">
+              <h3 className="text-lg font-bold mb-2">Putaway</h3>
+              <form onSubmit={async e => {
+                e.preventDefault();
+                setPutawayLoading(true);
+                setPutawayError(null);
+                try {
+                  // Find ASN header and line (for item_id, batch, etc.)
+                  const header = headerRecords.find(h => h.id === putawayHeaderId);
+                  const line = lineRecords.find(l => l.asn_header_id === putawayHeaderId);
+                  if (!header || !line) throw new Error('ASN header or line not found');
+                  // Build payload
+                  const payload = {
+                    receiving_transaction_id: putawayHeaderId, // or use correct receiving txn id
+                    item_id: line.item_id,
+                    putaway_quantity: Number(putawayQuantity),
+                    batch_number: line.batch_number,
+                    serial_number: line.serial_number,
+                    pallet_id: line.pallet_id,
+                    from_location_id: null, // set if available
+                    to_location_id: putawayLocation,
+                    putaway_by: 1, // TODO: use current user id
+                    putaway_date: new Date().toISOString(),
+                    remarks: putawayRemarks,
+                    location_id: putawayLocation,
+                    created_at: new Date().toISOString(),
+                  };
+                  const res = await fetch(process.env.NEXT_PUBLIC_URL_PUTAWAY_TRANSACTIONS || 'http://47.128.154.44:8030/putaway_transactions', {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'X-Api-Key': apiKey,
+                    },
+                    body: JSON.stringify(payload),
+                  });
+                  if (!res.ok) throw new Error('Failed to save putaway transaction');
+                  setShowPutawayModal(false);
+                  setPutawayHeaderId(null);
+                  setPutawayLocation('');
+                  setPutawayQuantity('');
+                  setPutawayRemarks('');
+                  // Optionally refresh records
+                } catch (err: any) {
+                  setPutawayError(err.message);
+                }
+                setPutawayLoading(false);
+              }}>
+                <div className="mb-2">
+                  <label className="block text-xs font-semibold mb-1">Location</label>
+                  <select className="border px-2 py-1 rounded w-full" value={putawayLocation} onChange={e => setPutawayLocation(e.target.value)} required>
+                    <option value="">Select location</option>
+                    {locationOptions.map(loc => (
+                      <option key={loc.id} value={loc.id}>{loc.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="mb-2">
+                  <label className="block text-xs font-semibold mb-1">Quantity</label>
+                  <input className="border px-2 py-1 rounded w-full" type="number" min="1" value={putawayQuantity} onChange={e => setPutawayQuantity(e.target.value)} required />
+                </div>
+                <div className="mb-2">
+                  <label className="block text-xs font-semibold mb-1">Remarks</label>
+                  <input className="border px-2 py-1 rounded w-full" type="text" value={putawayRemarks} onChange={e => setPutawayRemarks(e.target.value)} />
+                </div>
+                {putawayError && <div className="text-red-600 text-xs mb-2">{putawayError}</div>}
+                <div className="flex gap-2 mt-4">
+                  <button type="submit" className="px-4 py-1 bg-blue-600 text-white rounded text-xs font-bold" disabled={putawayLoading}>{putawayLoading ? 'Saving...' : 'Putaway'}</button>
+                  <button type="button" className="px-4 py-1 bg-gray-400 text-white rounded text-xs font-bold" onClick={() => setShowPutawayModal(false)}>Cancel</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
         {/* ASN Headers (left column, 30%) */}
         <div className="min-w-0" style={{ flexBasis: '30%', maxWidth: '30%', minWidth: 0 }}>
           <div className="flex items-center justify-between mb-4">
@@ -778,8 +871,9 @@ export default function InboundPage() {
                   const linesToUpdate = lineRecords.filter(line => line.asn_header_id === selectedHeaderId);
                   for (const line of linesToUpdate) {
                     const lineToSend = {
-                      item_id: line.item_id,
-                      item_description: line.item_description,
+                      item_code: line.item_code,
+                      item_name: line.item_name,
+                      description: line.description,
                       expected_quantity: line.expected_quantity,
                       received_quantity: line.received_quantity,
                       batch_number: line.batch_number,
@@ -832,6 +926,24 @@ export default function InboundPage() {
                     values: ['New', 'Received', 'PutAway', 'Complete'],
                   },
                   width: 120,
+                  cellRenderer: params => {
+                    if (typeof params.value === 'string' && params.value.includes('PutAway')) {
+                      return (
+                        <span>
+                          {params.value}
+                          <button
+                            className="ml-2 px-2 py-1 bg-green-600 text-white rounded text-xs font-bold"
+                            onClick={e => {
+                              e.stopPropagation();
+                              setPutawayHeaderId(params.data.id);
+                              setShowPutawayModal(true);
+                            }}
+                          >Putaway</button>
+                        </span>
+                      );
+                    }
+                    return params.value;
+                  }
                 },
                 ...headerRecordCols.filter(col => col.field !== 'status' && col.field !== 'id'),
               ]}

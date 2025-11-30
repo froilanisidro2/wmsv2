@@ -29,6 +29,7 @@ const tabs = [
   { name: 'Items', key: 'items' },
   { name: 'Warehouses', key: 'warehouses' },
   { name: 'Locations', key: 'locations' },
+  { name: 'Users', key: 'users' },
 ];
 
 export default function ConfigPage() {
@@ -42,6 +43,8 @@ export default function ConfigPage() {
   const [formData, setFormData] = useState<any>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [users, setUsers] = useState<any[]>([]);
+  const [inventory, setInventory] = useState<any[]>([]);
 
   useEffect(() => {
     async function fetchAll() {
@@ -54,6 +57,11 @@ export default function ConfigPage() {
       } catch (err) {
         // Optionally handle error
       }
+      const res = await fetch("http://47.128.154.44:8030/users", { headers: { 'X-Api-Key': process.env.NEXT_PUBLIC_X_API_KEY || '' } });
+      if (res.ok) setUsers(await res.json());
+      // Fetch inventory
+      const invRes = await fetch("http://47.128.154.44:8030/inventory", { headers: { 'X-Api-Key': process.env.NEXT_PUBLIC_X_API_KEY || '' } });
+      if (invRes.ok) setInventory(await invRes.json());
     }
     fetchAll();
   }, []);
@@ -65,6 +73,7 @@ export default function ConfigPage() {
     items: "http://47.128.154.44:8030/items",
     warehouses: "http://47.128.154.44:8030/warehouses",
     locations: "http://47.128.154.44:8030/locations",
+    inventory: "http://47.128.154.44:8030/inventory",
   };
 
   // Form field definitions for each tab
@@ -180,6 +189,10 @@ export default function ConfigPage() {
       if (tab === 'items') setItems(await getItems());
       if (tab === 'warehouses') setWarehouses(await getWarehouses());
       if (tab === 'locations') setLocations(await getLocations());
+      if (tab === 'users') {
+        const res = await fetch(endpoints.users, { headers: { 'X-Api-Key': process.env.NEXT_PUBLIC_X_API_KEY || '' } });
+        if (res.ok) setUsers(await res.json());
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to add record');
     }
@@ -188,6 +201,9 @@ export default function ConfigPage() {
 
   // Add form UI
   function renderAddForm(tab: string) {
+    if (!formFields[tab]) {
+      return <div className="mb-4 p-4 border rounded bg-gray-50 text-red-600">No form fields defined for this tab.</div>;
+    }
     return (
       <div className="mb-4 p-4 border rounded bg-gray-50">
         <h3 className="font-bold mb-2">Add {tabs.find(t => t.key === tab)?.name}</h3>
