@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { getVendors, getItems } from '../config/api';
 import { AgGridReact } from 'ag-grid-react';
 import { ModuleRegistry, AllCommunityModule } from 'ag-grid-community';
 import { ASNBarcode } from './ASNBarcode';
@@ -9,12 +10,7 @@ import 'ag-grid-community/styles/ag-theme-alpine.css';
 // Register all community modules for AG Grid v34+ (ESM)
 ModuleRegistry.registerModules([AllCommunityModule]);
 
-function uuidv4() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
-}
+// Remove uuidv4, IDs are now auto-incremented by backend
 
 const apiKey = process.env.NEXT_PUBLIC_X_API_KEY || '';
 const urlHeaders = process.env.NEXT_PUBLIC_URL_ASN_HEADERS || '';
@@ -54,9 +50,10 @@ const columnDefs = [
   { headerName: 'Remarks', field: 'remarks', editable: true },
 ];
 
+
 interface ASNHeader {
   asnNumber: string;
-  vendorId: string;
+  vendorId: number | null;
   vendorName: string;
   poNumber: string;
   asnDate: string;
@@ -65,7 +62,7 @@ interface ASNHeader {
 }
 
 interface ASNLine {
-  itemId: string;
+  itemId: number | null;
   itemDescription: string;
   expectedQuantity: string;
   receivedQuantity: string;
@@ -79,6 +76,13 @@ interface ASNLine {
 }
 
 export default function InboundPage() {
+  // Vendor and item lists for dropdowns
+  const [vendors, setVendors] = useState<any[]>([]);
+  const [items, setItems] = useState<any[]>([]);
+  useEffect(() => {
+    getVendors().then(setVendors);
+    getItems().then(setItems);
+  }, []);
             // State for ASN lines update feedback
             const [linesUpdateStatus, setLinesUpdateStatus] = useState<string | null>(null);
 
@@ -197,15 +201,16 @@ export default function InboundPage() {
       // Unified handler for ASN header and lines submission
       const handleSubmitEntry = async () => {
         setEntrySubmitStatus(null);
-        // Validate ASN Date
         if (!header.asnDate) {
           setEntrySubmitStatus('ASN Date is required. Please select a valid date.');
           return;
         }
-        // Prepare ASN header payload
-        const headerId = uuidv4();
+        if (!header.vendorId) {
+          setEntrySubmitStatus('Vendor is required.');
+          return;
+        }
+        // Prepare ASN header payload (no id)
         const asnHeaderPayload = {
-          id: headerId,
           asn_number: header.asnNumber,
           vendor_id: header.vendorId,
           vendor_name: header.vendorName,
@@ -215,9 +220,8 @@ export default function InboundPage() {
           remarks: header.remarks
         };
         // Prepare ASN lines payload
-        const filteredRows = rowData.filter(row => row.itemId && row.itemId.trim() !== '');
+        const filteredRows = rowData.filter(row => row.itemId !== null);
         const asnLinesPayload = filteredRows.map(row => ({
-          id: uuidv4(),
           item_id: row.itemId,
           item_description: row.itemDescription,
           expected_quantity: row.expectedQuantity ? Number(row.expectedQuantity) : null,
@@ -229,7 +233,6 @@ export default function InboundPage() {
           pallet_id: row.palletId || null,
           uom: row.uom || null,
           remarks: row.remarks || null,
-          asn_header_id: headerId,
         }));
         if (asnLinesPayload.length === 0) {
           setEntrySubmitStatus('No valid ASN line items to submit.');
@@ -250,14 +253,27 @@ export default function InboundPage() {
             setEntrySubmitStatus(`Header insert failed: ${headerRes.status} - ${headerText.slice(0, 500)}`);
             return;
           }
-          // 2. Insert ASN lines
+          let headerData;
+          try {
+            headerData = JSON.parse(headerText);
+          } catch {
+            setEntrySubmitStatus(`ASN header response is not valid JSON. Response: ${headerText.slice(0, 500)}`);
+            return;
+          }
+          let asn_header_id = Array.isArray(headerData) ? headerData[0]?.id : headerData.id;
+          if (!asn_header_id) {
+            setEntrySubmitStatus('Header insert did not return an ID.');
+            return;
+          }
+          // 2. Insert ASN lines with correct header id
+          const asnLinesPayloadWithHeader = asnLinesPayload.map(line => ({ ...line, asn_header_id }));
           const linesRes = await fetch(urlLines, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'X-Api-Key': apiKey,
             },
-            body: JSON.stringify(asnLinesPayload),
+            body: JSON.stringify(asnLinesPayloadWithHeader),
           });
           const linesText = await linesRes.text();
           if (!linesRes.ok) {
@@ -283,6 +299,7 @@ export default function InboundPage() {
             setHeaderRecords(Array.isArray(headersData) ? headersData : [headersData]);
             const linesRes = await fetch(urlLines, { method: 'GET', headers: { 'X-Api-Key': apiKey } });
             const linesData = await linesRes.json();
+            console.log('ASN Lines Data:', linesData); // Debug log
             setLineRecords(Array.isArray(linesData) ? linesData : [linesData]);
           } catch (err) {
             // ...handle error
@@ -328,7 +345,7 @@ export default function InboundPage() {
   const [showPasteArea, setShowPasteArea] = useState(false);
   const [header, setHeader] = useState<ASNHeader>({
     asnNumber: '',
-    vendorId: '',
+    vendorId: null,
     vendorName: '',
     poNumber: '',
     asnDate: '',
@@ -341,15 +358,15 @@ export default function InboundPage() {
   useEffect(() => {
     setHeader(h => ({
       ...h,
-      asnNumber: uuidv4(),
-      vendorId: uuidv4(),
+      asnNumber: '',
+      vendorId: null,
     }));
     setClientReady(true);
   }, []);
   const [rowCount, setRowCount] = useState(5);
   const [rowData, setRowData] = useState<ASNLine[]>([
     {
-      itemId: '',
+      itemId: null,
       itemDescription: '',
       expectedQuantity: '',
       receivedQuantity: '',
@@ -369,7 +386,7 @@ export default function InboundPage() {
 
   const defaultColDef = useMemo(() => ({ resizable: true, sortable: true, filter: true, minWidth: 120 }), []);
 
-  const handleHeaderChange = (field: keyof ASNHeader, value: string) => {
+  const handleHeaderChange = (field: keyof ASNHeader, value: any) => {
     setHeader({ ...header, [field]: value });
   };
 
@@ -377,7 +394,7 @@ export default function InboundPage() {
     const count = Math.max(1, Number(e.target.value));
     setRowCount(count);
     setRowData(Array.from({ length: count }, () => ({
-      itemId: '',
+      itemId: null,
       itemDescription: '',
       expectedQuantity: '',
       receivedQuantity: '',
@@ -396,7 +413,7 @@ export default function InboundPage() {
     if (!text) return;
     const rows = text.trim().split(/\r?\n/).map(row => row.split('\t'));
     const newRows: ASNLine[] = rows.map(cols => ({
-      itemId: cols[0] || '',
+      itemId: cols[0] ? Number(cols[0]) : null,
       itemDescription: cols[1] || '',
       expectedQuantity: cols[2] || '',
       receivedQuantity: cols[3] || '',
@@ -426,9 +443,9 @@ export default function InboundPage() {
     }
     try {
       // Validate ASN lines first
-      const filteredRows = rowData.filter(row => row.itemId && row.itemId.trim() !== '');
+      const filteredRows = rowData.filter(row => row.itemId !== null);
       const asnLinesPayload = filteredRows.map(row => ({
-        id: uuidv4(),
+        // id is auto-generated by backend
         // asn_header_id will be set after header insert
         item_id: row.itemId,
         item_description: row.itemDescription,
@@ -451,9 +468,8 @@ export default function InboundPage() {
       }
 
       // 1. Insert ASN header
-      const headerId = uuidv4();
+      // headerId is auto-generated by backend
       const asnHeaderPayload = {
-        id: headerId,
         asn_number: header.asnNumber,
         vendor_id: header.vendorId,
         vendor_name: header.vendorName,
@@ -485,8 +501,9 @@ export default function InboundPage() {
 
       let asn_header_id = Array.isArray(headerData) ? headerData[0]?.id : headerData.id;
       if (!asn_header_id) {
-        // Fallback: use generated headerId if backend did not return one
-        asn_header_id = headerId;
+        setLoading(false);
+        setError('Header insert did not return an ID.');
+        return;
       }
 
       // Now insert ASN lines with correct header id
@@ -552,9 +569,13 @@ export default function InboundPage() {
               <input type="text" value={header.asnNumber} readOnly className="border px-2 py-1 w-full rounded bg-gray-100" />
             </div>
             <div>
-              <label className="block font-medium mb-1">Vendor ID</label>
-              <input type="text" value={header.vendorId} onChange={e => handleHeaderChange('vendorId', e.target.value)} className="border px-2 py-1 w-full rounded" />
-              <span className="text-xs text-gray-500">Must be a valid UUID</span>
+              <label className="block font-medium mb-1">Vendor</label>
+              <select value={header.vendorId ?? ''} onChange={e => handleHeaderChange('vendorId', e.target.value ? Number(e.target.value) : null)} className="border px-2 py-1 w-full rounded">
+                <option value="">Select vendor</option>
+                {vendors.map(v => (
+                  <option key={v.id} value={v.id}>{v.vendor_code} - {v.vendor_name}</option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block font-medium mb-1">Vendor Name</label>
@@ -615,7 +636,7 @@ export default function InboundPage() {
               onClick={() => {
                 const today = new Date().toISOString().slice(0, 10);
                 setRowData([...rowData, {
-                  itemId: '',
+                  itemId: null,
                   itemDescription: '',
                   expectedQuantity: '',
                   receivedQuantity: '',
@@ -905,7 +926,7 @@ export default function InboundPage() {
           </div>
           <div className="ag-theme-alpine" style={{ width: '100%', minWidth: 0, height: 300 }}>
             <AgGridReact
-              rowData={selectedHeaderId ? lineRecords.filter(line => line.asn_header_id === selectedHeaderId) : lineRecords}
+              rowData={selectedHeaderId ? lineRecords.filter(line => line.asn_header_id === selectedHeaderId) : []}
               columnDefs={lineRecordCols}
               defaultColDef={{ resizable: true, sortable: true, filter: true, editable: true }}
               suppressRowClickSelection={true}
