@@ -25,7 +25,7 @@ const columnDefs = [
   { headerName: 'Expected Qty', field: 'expectedQuantity', editable: true },
   { headerName: 'Received Qty', field: 'receivedQuantity', editable: true },
   { headerName: 'Batch #', field: 'batchNumber', editable: true },
-  { headerName: 'Serial #', field: 'serialNumber', editable: true },
+  // Serial # field removed
   {
     headerName: 'Mfg Date',
     field: 'manufacturingDate',
@@ -54,7 +54,7 @@ const columnDefs = [
 
 interface ASNHeader {
   asnNumber: string;
-  vendorId: number | null;
+  vendorCode: string;
   vendorName: string;
   poNumber: string;
   asnDate: string;
@@ -69,7 +69,7 @@ interface ASNLine {
   expectedQuantity: string;
   receivedQuantity: string;
   batchNumber: string;
-  serialNumber: string;
+  // serialNumber removed
   manufacturingDate: string;
   expiryDate: string;
   palletId: string;
@@ -221,14 +221,14 @@ export default function InboundPage() {
           setEntrySubmitStatus('ASN Date is required. Please select a valid date.');
           return;
         }
-        if (!header.vendorId) {
+        if (!header.vendorCode) {
           setEntrySubmitStatus('Vendor is required.');
           return;
         }
         // Prepare ASN header payload (no id)
         const asnHeaderPayload = {
           asn_number: header.asnNumber,
-          vendor_id: header.vendorId,
+          vendor_code: header.vendorCode,
           vendor_name: header.vendorName,
           po_number: header.poNumber,
           asn_date: header.asnDate,
@@ -244,7 +244,7 @@ export default function InboundPage() {
           expected_quantity: row.expectedQuantity ? Number(row.expectedQuantity) : null,
           received_quantity: row.receivedQuantity ? Number(row.receivedQuantity) : null,
           batch_number: row.batchNumber || null,
-          serial_number: row.serialNumber || null,
+          // serial_number removed
           manufacturing_date: row.manufacturingDate ? row.manufacturingDate.slice(0, 10) : null,
           expiry_date: row.expiryDate ? row.expiryDate.slice(0, 10) : null,
           pallet_id: row.palletId || null,
@@ -305,6 +305,7 @@ export default function InboundPage() {
     // Record view state
     const [headerRecords, setHeaderRecords] = useState<any[]>([]);
     const [lineRecords, setLineRecords] = useState<any[]>([]);
+    const [filteredRecordLines, setFilteredRecordLines] = useState<any[]>([]);
 
     // Fetch ASN headers and lines for record view
       useEffect(() => {
@@ -328,21 +329,21 @@ export default function InboundPage() {
   // AG Grid column definitions for record view
   const headerRecordCols = [
       { headerName: 'ID', field: 'id', editable: false },
-    { headerName: 'ASN Number', field: 'asn_number', editable: true },
-    { headerName: 'Vendor ID', field: 'vendor_id', editable: true },
-    { headerName: 'Vendor Name', field: 'vendor_name', editable: true },
-    { headerName: 'PO Number', field: 'po_number', editable: true },
-    { headerName: 'ASN Date', field: 'asn_date', editable: true },
-    {
-      headerName: 'Status',
-      field: 'status',
-      editable: true,
-      cellEditor: 'agSelectCellEditor',
-      cellEditorParams: {
-        values: ['New', 'Received', 'PutAway', 'Complete'],
+      { headerName: 'ASN Number', field: 'asn_number', editable: true },
+      { headerName: 'Vendor Code', field: 'vendor_code', editable: true },
+      { headerName: 'Vendor Name', field: 'vendor_name', editable: true },
+      { headerName: 'PO Number', field: 'po_number', editable: true },
+      { headerName: 'ASN Date', field: 'asn_date', editable: true },
+      {
+        headerName: 'Status',
+        field: 'status',
+        editable: true,
+        cellEditor: 'agSelectCellEditor',
+        cellEditorParams: {
+          values: ['New', 'Received', 'PutAway', 'Complete'],
+        },
       },
-    },
-    { headerName: 'Remarks', field: 'remarks', editable: true },
+      { headerName: 'Remarks', field: 'remarks', editable: true },
   ];
 
   const lineRecordCols = [
@@ -362,13 +363,37 @@ export default function InboundPage() {
   const [showPasteArea, setShowPasteArea] = useState(false);
   const [header, setHeader] = useState<ASNHeader>({
     asnNumber: '',
-    vendorId: null,
+    vendorCode: '',
     vendorName: '',
     poNumber: '',
     asnDate: '',
     status: '',
     remarks: '',
   });
+
+  // Auto-generate ASN number when ASN Date changes or on mount
+  useEffect(() => {
+    const generateASNNumber = async () => {
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      // Fetch count of ASN created today for auto-increment
+      let increment = 1;
+      try {
+        const res = await fetch(`${urlHeaders}?asn_date=eq.${yyyy}-${mm}-${dd}`, { headers: { 'X-Api-Key': apiKey } });
+        if (res.ok) {
+          const data = await res.json();
+          increment = Array.isArray(data) ? data.length + 1 : 1;
+        }
+      } catch {}
+      setHeader(h => ({
+        ...h,
+        asnNumber: `ASN${yyyy}${mm}${dd}${String(increment).padStart(3, '0')}`
+      }));
+    };
+    generateASNNumber();
+  }, [header.asnDate]);
   const [clientReady, setClientReady] = useState(false);
 
   // Auto-generate ASN and vendorId only on client after mount
@@ -383,12 +408,12 @@ export default function InboundPage() {
   const [rowCount, setRowCount] = useState(5);
   const [rowData, setRowData] = useState<ASNLine[]>([
     {
-      itemId: null,
-      itemDescription: '',
+      itemCode: '',
+      itemName: '',
+      description: '',
       expectedQuantity: '',
       receivedQuantity: '',
       batchNumber: '',
-      serialNumber: '',
       manufacturingDate: '',
       expiryDate: '',
       palletId: '',
@@ -411,12 +436,12 @@ export default function InboundPage() {
     const count = Math.max(1, Number(e.target.value));
     setRowCount(count);
     setRowData(Array.from({ length: count }, () => ({
-      itemId: null,
-      itemDescription: '',
+      itemCode: '',
+      itemName: '',
+      description: '',
       expectedQuantity: '',
       receivedQuantity: '',
       batchNumber: '',
-      serialNumber: '',
       manufacturingDate: '',
       expiryDate: '',
       palletId: '',
@@ -430,12 +455,12 @@ export default function InboundPage() {
     if (!text) return;
     const rows = text.trim().split(/\r?\n/).map(row => row.split('\t'));
     const newRows: ASNLine[] = rows.map(cols => ({
-      itemId: cols[0] ? Number(cols[0]) : null,
-      itemDescription: cols[1] || '',
-      expectedQuantity: cols[2] || '',
-      receivedQuantity: cols[3] || '',
-      batchNumber: cols[4] || '',
-      serialNumber: cols[5] || '',
+      itemCode: cols[0] || '',
+      itemName: cols[1] || '',
+      description: cols[2] || '',
+      expectedQuantity: cols[3] || '',
+      receivedQuantity: cols[4] || '',
+      batchNumber: cols[5] || '',
       manufacturingDate: cols[6] || '',
       expiryDate: cols[7] || '',
       palletId: cols[8] || '',
@@ -460,16 +485,14 @@ export default function InboundPage() {
     }
     try {
       // Validate ASN lines first
-      const filteredRows = rowData.filter(row => row.itemId !== null);
+      const filteredRows = rowData.filter(row => row.itemCode !== '');
       const asnLinesPayload = filteredRows.map(row => ({
-        // id is auto-generated by backend
-        // asn_header_id will be set after header insert
-        item_id: row.itemId,
-        item_description: row.itemDescription,
+        item_code: row.itemCode,
+        item_name: row.itemName,
+        description: row.description,
         expected_quantity: row.expectedQuantity ? Number(row.expectedQuantity) : null,
         received_quantity: row.receivedQuantity ? Number(row.receivedQuantity) : null,
         batch_number: row.batchNumber || null,
-        serial_number: row.serialNumber || null,
         manufacturing_date: row.manufacturingDate ? row.manufacturingDate.slice(0, 10) : null,
         expiry_date: row.expiryDate ? row.expiryDate.slice(0, 10) : null,
         pallet_id: row.palletId || null,
@@ -488,7 +511,7 @@ export default function InboundPage() {
       // headerId is auto-generated by backend
       const asnHeaderPayload = {
         asn_number: header.asnNumber,
-        vendor_id: header.vendorId,
+        vendor_code: header.vendorCode,
         vendor_name: header.vendorName,
         po_number: header.poNumber,
         asn_date: header.asnDate,
@@ -587,10 +610,22 @@ export default function InboundPage() {
             </div>
             <div>
               <label className="block font-medium mb-1">Vendor</label>
-              <select value={header.vendorId ?? ''} onChange={e => handleHeaderChange('vendorId', e.target.value ? Number(e.target.value) : null)} className="border px-2 py-1 w-full rounded">
+              <select
+                value={header.vendorCode ?? ''}
+                onChange={e => {
+                  const selectedCode = e.target.value;
+                  const selectedVendor = vendors.find(v => v.vendor_code === selectedCode);
+                  setHeader(h => ({
+                    ...h,
+                    vendorCode: selectedCode,
+                    vendorName: selectedVendor ? selectedVendor.vendor_name : '',
+                  }));
+                }}
+                className="border px-2 py-1 w-full rounded"
+              >
                 <option value="">Select vendor</option>
                 {vendors.map(v => (
-                  <option key={v.id} value={v.id}>{v.vendor_code} - {v.vendor_name}</option>
+                  <option key={v.vendor_code} value={v.vendor_code}>{v.vendor_code} - {v.vendor_name}</option>
                 ))}
               </select>
             </div>
@@ -621,10 +656,108 @@ export default function InboundPage() {
             <button
               type="button"
               className="bg-blue-600 text-white px-4 py-2 rounded shadow font-semibold"
-              onClick={handleSubmitEntry}
+              onClick={async () => {
+                setLoading(true);
+                setEntrySubmitStatus(null);
+                // Validate ASN header fields
+                if (!header.asnDate) {
+                  setLoading(false);
+                  setEntrySubmitStatus('ASN Date is required. Please select a valid date.');
+                  return;
+                }
+                if (!header.vendorCode) {
+                  setLoading(false);
+                  setEntrySubmitStatus('Vendor is required.');
+                  return;
+                }
+                // Prepare ASN header payload
+                const asnHeaderPayload = {
+                  asn_number: header.asnNumber,
+                  vendor_code: header.vendorCode,
+                  vendor_name: header.vendorName,
+                  po_number: header.poNumber,
+                  asn_date: header.asnDate,
+                  status: header.status || 'New',
+                  remarks: header.remarks
+                };
+                // Prepare ASN lines payload
+                const filteredRows = rowData.filter(row => row.itemCode);
+                const asnLinesPayload = filteredRows.map(row => ({
+                  item_code: row.itemCode,
+                  item_name: row.itemName,
+                  description: row.description,
+                  expected_quantity: row.expectedQuantity ? Number(row.expectedQuantity) : null,
+                  received_quantity: row.receivedQuantity ? Number(row.receivedQuantity) : null,
+                  batch_number: row.batchNumber || null,
+                  manufacturing_date: row.manufacturingDate ? row.manufacturingDate.slice(0, 10) : null,
+                  expiry_date: row.expiryDate ? row.expiryDate.slice(0, 10) : null,
+                  pallet_id: row.palletId || null,
+                  uom: row.uom || null,
+                  remarks: row.remarks || null,
+                }));
+                if (asnLinesPayload.length === 0) {
+                  setLoading(false);
+                  setEntrySubmitStatus('No valid ASN line items to submit.');
+                  return;
+                }
+                try {
+                  // 1. Insert ASN header
+                  const headerRes = await fetch(urlHeaders, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'X-Api-Key': apiKey,
+                    },
+                    body: JSON.stringify(asnHeaderPayload),
+                  });
+                  const headerText = await headerRes.text();
+                  if (!headerRes.ok) {
+                    setLoading(false);
+                    setEntrySubmitStatus(`Header insert failed: ${headerRes.status} - ${headerText.slice(0, 500)}`);
+                    return;
+                  }
+                  let headerData;
+                  try {
+                    headerData = JSON.parse(headerText);
+                  } catch {
+                    setLoading(false);
+                    setEntrySubmitStatus(`ASN header response is not valid JSON. Response: ${headerText.slice(0, 500)}`);
+                    return;
+                  }
+                  let asn_header_id = Array.isArray(headerData) ? headerData[0]?.id : headerData.id;
+                  if (!asn_header_id) {
+                    setLoading(false);
+                    setEntrySubmitStatus('Header insert did not return an ID.');
+                    return;
+                  }
+                  // 2. Insert ASN lines with correct header id
+                    const asnLinesPayloadWithHeader = asnLinesPayload.map(line => ({ ...line, asn_header_id }));
+                    console.log('ASN Lines Payload:', asnLinesPayloadWithHeader);
+                    const linesRes = await fetch(urlLines, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'X-Api-Key': apiKey,
+                      },
+                      body: JSON.stringify(asnLinesPayloadWithHeader),
+                    });
+                    const linesText = await linesRes.text();
+                    console.log('ASN Lines Response:', linesRes.status, linesText);
+                    if (!linesRes.ok) {
+                      setLoading(false);
+                      setEntrySubmitStatus(`Lines insert failed: ${linesRes.status} - ${linesText.slice(0, 500)}`);
+                      return;
+                    }
+                    setEntrySubmitStatus('ASN entry (header + lines) submitted successfully!');
+                    setLoading(false);
+                } catch (err: any) {
+                  setLoading(false);
+                  setEntrySubmitStatus(`Error: ${err.message}`);
+                }
+              }}
               disabled={loading}
             >
-              {loading ? 'Saving...' : 'Save ASN Entry'}
+              {loading ? 'Saving...' : 'Save'}
             </button>
             {entrySubmitStatus && (
               <div className="mt-2 text-sm font-semibold p-2 rounded" style={{ background: '#f3f4f6', color: entrySubmitStatus.startsWith('Error') || entrySubmitStatus.includes('failed') ? '#dc2626' : '#059669' }}>
@@ -653,12 +786,12 @@ export default function InboundPage() {
               onClick={() => {
                 const today = new Date().toISOString().slice(0, 10);
                 setRowData([...rowData, {
-                  itemId: null,
-                  itemDescription: '',
+                  itemCode: '',
+                  itemName: '',
+                  description: '',
                   expectedQuantity: '',
                   receivedQuantity: '',
                   batchNumber: '',
-                  serialNumber: '',
                   manufacturingDate: today,
                   expiryDate: today,
                   palletId: '',
@@ -743,6 +876,80 @@ export default function InboundPage() {
               rowSelection='multiple'
             />
           </div>
+          {/* Separate Save ASN Lines Button */}
+          <div className="mt-4">
+            <button
+              type="button"
+              className="bg-green-600 text-white px-4 py-2 rounded shadow font-semibold"
+              onClick={async () => {
+                // Save ASN lines independently
+                if (!header.asnNumber) {
+                  setEntrySubmitStatus('Save ASN header first to get ASN Number.');
+                  return;
+                }
+                // Fetch ASN header to get its ID
+                let asnHeaderId = null;
+                try {
+                  const res = await fetch(`${urlHeaders}?asn_number=eq.${header.asnNumber}`, { headers: { 'X-Api-Key': apiKey } });
+                  const data = await res.json();
+                  asnHeaderId = Array.isArray(data) ? data[0]?.id : data.id;
+                } catch {
+                  setEntrySubmitStatus('Could not fetch ASN header ID.');
+                  return;
+                }
+                if (!asnHeaderId) {
+                  setEntrySubmitStatus('ASN header ID not found. Save ASN header first.');
+                  return;
+                }
+                // Prepare ASN lines payload
+                const filteredRows = rowData.filter(row => row.itemCode);
+                const asnLinesPayload = filteredRows.map(row => {
+                  // Find item_code (integer) from items list using itemCode (string)
+                  const item = items.find(i => i.item_code === row.itemCode || i.item_code?.toString() === row.itemCode);
+                  return {
+                    item_code: item ? item.item_code : (row.itemCode ? Number(row.itemCode) : null),
+                    item_name: row.itemName,
+                    description: row.description,
+                    expected_quantity: row.expectedQuantity ? Number(row.expectedQuantity) : null,
+                    received_quantity: row.receivedQuantity ? Number(row.receivedQuantity) : null,
+                    batch_number: row.batchNumber || null,
+                    manufacturing_date: row.manufacturingDate ? row.manufacturingDate.slice(0, 10) : null,
+                    expiry_date: row.expiryDate ? row.expiryDate.slice(0, 10) : null,
+                    pallet_id: row.palletId || null,
+                    uom: row.uom || null,
+                    remarks: row.remarks || null,
+                    asn_header_id: asnHeaderId,
+                  };
+                });
+                console.log('ASN Lines Payload:', asnLinesPayload);
+                if (asnLinesPayload.length === 0) {
+                  setEntrySubmitStatus('No valid ASN line items to submit.');
+                  return;
+                }
+                try {
+                  const linesRes = await fetch(urlLines, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'X-Api-Key': apiKey,
+                    },
+                    body: JSON.stringify(asnLinesPayload),
+                  });
+                  const linesText = await linesRes.text();
+                  console.log('ASN Lines Response:', linesRes.status, linesText);
+                  if (!linesRes.ok) {
+                    setEntrySubmitStatus(`Lines insert failed: ${linesRes.status} - ${linesText.slice(0, 500)}`);
+                    return;
+                  }
+                  setEntrySubmitStatus('ASN lines submitted successfully!');
+                } catch (err: any) {
+                  setEntrySubmitStatus(`Error: ${err.message}`);
+                }
+              }}
+            >
+              Save ASN Lines
+            </button>
+          </div>
           <div className="mt-2 text-sm text-gray-600">
             Tip: Select the first cell, then paste (Ctrl+V) your multi-cell data from Excel or Google Sheets. AG Grid will fill the range automatically.
           </div>
@@ -771,7 +978,7 @@ export default function InboundPage() {
                     item_id: line.item_id,
                     putaway_quantity: Number(putawayQuantity),
                     batch_number: line.batch_number,
-                    serial_number: line.serial_number,
+                    // serial_number removed
                     pallet_id: line.pallet_id,
                     from_location_id: null, // set if available
                     to_location_id: putawayLocation,
@@ -926,7 +1133,7 @@ export default function InboundPage() {
                     values: ['New', 'Received', 'PutAway', 'Complete'],
                   },
                   width: 120,
-                  cellRenderer: params => {
+                  cellRenderer: (params: any) => {
                     if (typeof params.value === 'string' && params.value.includes('PutAway')) {
                       return (
                         <span>
@@ -953,9 +1160,9 @@ export default function InboundPage() {
               onRowClicked={params => {
                 if (params.data && params.data.id) {
                   setSelectedHeaderId(params.data.id);
-                  const filteredLines = lineRecords.filter(line => line.asn_header_id === params.data.id);
+                  setFilteredRecordLines(lineRecords.filter(line => line.asn_header_id === params.data.id));
                   console.log('Row clicked. Selected ASN Header ID:', params.data.id);
-                  console.log('Filtered ASN Lines:', filteredLines);
+                  console.log('Filtered ASN Lines:', lineRecords.filter(line => line.asn_header_id === params.data.id));
                 }
               }}
               onCellValueChanged={async params => {
